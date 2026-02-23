@@ -1,5 +1,17 @@
 # @spandex/core
 
+## 0.4.3
+
+### Patch Changes
+
+- 924e61a: Fix(velora): prevent edge case of direct fee setting when partner key is set without capture addresses
+
+## 0.4.2
+
+### Patch Changes
+
+- 64c1bc1: Add Velora aggregator
+
 ## 0.4.1
 
 ### Patch Changes

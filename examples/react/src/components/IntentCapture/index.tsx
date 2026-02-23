@@ -32,6 +32,7 @@ export type TxData = {
   to: Address;
   value?: bigint;
   chainId: number;
+  gas?: bigint;
 };
 
 function prepareCalls({
@@ -68,13 +69,23 @@ function prepareCalls({
       });
     }
 
-    calls.push({
+    const swapCall: TxData = {
       to: bestQuote.txData.to,
       name: "SELL",
       data: bestQuote.txData.data,
       chainId,
       value: BigInt(bestQuote.txData.value || 0),
-    });
+    };
+
+    // specify gasLimit with 50% buffer using the simulated `gasUsed`.
+    // if the `gasUsed` is indeed undefined, we can fall back to the wallet's gas estimation.
+    if (bestQuote.simulation.success) {
+      const { gasUsed } = bestQuote.simulation;
+      const gasLimit = gasUsed ? (gasUsed * 150n) / 100n : undefined;
+      swapCall.gas = gasLimit;
+    }
+
+    calls.push(swapCall);
   }
 
   return calls;
@@ -85,7 +96,7 @@ const QUOTE_REFRESH_INTERVAL_MS = 10_000;
 export function IntentCapture() {
   const { sellToken, setSellToken, buyToken, setBuyToken, onSuccessfulTx } = useTokenSelect();
   const { address, chainId, isConnected } = useConnection();
-  const { isWrongChain } = useSupportedChain();
+  const { isSupportedChain } = useSupportedChain();
   const [prevSellToken, setPrevSellToken] = useState(sellToken);
   const [numSellTokens, setNumSellTokens] = useState<string>(sellToken.defaultInput);
   const [selectedMetric, setSelectedMetric] = useState<Metric>("price");
@@ -103,21 +114,26 @@ export function IntentCapture() {
     setNumSellTokens(sellToken.defaultInput);
   }
 
-  const { data: sellTokenBalance, isLoading: isLoadingBalance } = useBalance({
-    chainId,
+  const { data: sellTokenBalance, isLoading: isLoadingSellBalance } = useBalance({
+    chainId: sellToken.chainId,
     owner: address,
     token: sellToken.address,
+    enabled: isSupportedChain,
   });
 
-  const { data: buyTokenBalance } = useBalance({
-    chainId,
+  const { data: buyTokenBalance, isLoading: isLoadingBuyBalance } = useBalance({
+    chainId: buyToken.chainId,
     owner: address,
     token: buyToken.address,
+    enabled: isSupportedChain,
   });
 
+  const isLoadingBalances = isLoadingSellBalance || isLoadingBuyBalance;
+
   const balances = {
-    sellToken: sellTokenBalance,
-    buyToken: buyTokenBalance,
+    // manually set to undefined here, or stale cached balances will appear after switching to an unsupported chain
+    sellToken: isSupportedChain ? sellTokenBalance : undefined,
+    buyToken: isSupportedChain ? buyTokenBalance : undefined,
   };
 
   const swap = useMemo(
@@ -161,10 +177,11 @@ export function IntentCapture() {
   });
 
   const { data: allowance } = useAllowance({
-    chainId,
+    chainId: sellToken.chainId,
     owner: address,
     token: sellToken.address,
     spender: bestQuote?.success ? bestQuote.txData.to : undefined,
+    enabled: isSupportedChain,
   });
 
   const needsApproval = useMemo(() => {
@@ -193,7 +210,7 @@ export function IntentCapture() {
       });
     }
 
-    if (isWrongChain) {
+    if (isConnected && !isSupportedChain) {
       state.connection.push({
         title: "Unsupported chain",
         cause: "unsupported",
@@ -239,7 +256,7 @@ export function IntentCapture() {
     return state;
   }, [
     isConnected,
-    isWrongChain,
+    isSupportedChain,
     numSellTokens,
     sellTokenBalance,
     sellToken,
@@ -258,12 +275,12 @@ export function IntentCapture() {
   const calls = useMemo(
     () =>
       prepareCalls({
-        chainId,
+        chainId: sellToken.chainId,
         bestQuote,
         needsApproval,
         sellTokenAddress: sellToken.address,
       }),
-    [bestQuote, needsApproval, chainId, sellToken.address],
+    [bestQuote, needsApproval, sellToken],
   );
 
   const onSwitchTokens = useCallback(() => {
@@ -301,7 +318,7 @@ export function IntentCapture() {
         bestQuote={bestQuote}
         sellToken={sellToken}
         balances={balances}
-        isLoadingBalances={isLoadingBalance}
+        isLoadingBalances={isLoadingBalances}
         numSellTokens={numSellTokens}
         setNumSellTokens={setNumSellTokens}
         buyToken={buyToken}
